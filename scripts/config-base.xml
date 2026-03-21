@@ -49,6 +49,8 @@
     <webgui>
       <protocol>https</protocol>
       <ssl-certref>selfcert</ssl-certref>
+      <althostnames>%%PUBLIC_IP%%</althostnames>
+      <nohttpreferercheck>1</nohttpreferercheck>
     </webgui>
   </system>
   <interfaces>

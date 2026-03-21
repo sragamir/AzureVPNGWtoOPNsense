@@ -339,37 +339,44 @@ if ($LASTEXITCODE -ne 0) {
 
 Remove-Item $settingsFile -ErrorAction SilentlyContinue
 
-# Route table
+# Route table (create independently of extension - NICs already exist)
 Write-Host "--- Creating route table ---"
-$lanNicIp = az network nic show `
+$LASTEXITCODE = 0  # Reset after extension which may have non-zero exit
+$lanNicIp = (az network nic show `
     --resource-group $ResourceGroup `
     --name $NicLanName `
-    --query "ipConfigurations[0].privateIpAddress" -o tsv
+    --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null)
 if (-not $lanNicIp) {
-    throw "Could not determine LAN NIC IP address. Check that NIC '$NicLanName' exists."
+    Write-Host "    WARNING: Could not get LAN NIC IP. Skipping route table." -ForegroundColor Yellow
+    Write-Host "    Create the route table manually after deployment." -ForegroundColor Yellow
+    $skipRouteTable = $true
+} else {
+    $skipRouteTable = $false
 }
-Write-Host "    LAN NIC IP: $lanNicIp" -ForegroundColor DarkGray
+if (-not $skipRouteTable) {
+    Write-Host "    LAN NIC IP: $lanNicIp" -ForegroundColor DarkGray
 
-az network route-table create --resource-group $ResourceGroup --name $RtName -o none
-Assert-AzSuccess "Create route table"
+    az network route-table create --resource-group $ResourceGroup --name $RtName -o none
+    Assert-AzSuccess "Create route table"
 
-az network route-table route create `
-    --resource-group $ResourceGroup `
-    --route-table-name $RtName `
-    --name "route-via-opnsense" `
-    --address-prefix "0.0.0.0/0" `
-    --next-hop-type VirtualAppliance `
-    --next-hop-ip-address $lanNicIp `
-    -o none
-Assert-AzSuccess "Create route"
+    az network route-table route create `
+        --resource-group $ResourceGroup `
+        --route-table-name $RtName `
+        --name "route-via-opnsense" `
+        --address-prefix "0.0.0.0/0" `
+        --next-hop-type VirtualAppliance `
+        --next-hop-ip-address $lanNicIp `
+        -o none
+    Assert-AzSuccess "Create route"
 
-az network vnet subnet update `
-    --resource-group $ResourceGroup `
-    --vnet-name $VnetName `
-    --name $SubnetLanName `
-    --route-table $RtName `
-    -o none
-Assert-AzSuccess "Associate route table"
+    az network vnet subnet update `
+        --resource-group $ResourceGroup `
+        --vnet-name $VnetName `
+        --name $SubnetLanName `
+        --route-table $RtName `
+        -o none
+    Assert-AzSuccess "Associate route table"
+}
 
 # Output
 $publicIp = az network public-ip show `
