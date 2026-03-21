@@ -230,22 +230,38 @@ az vm create \
   -o none
 
 ###############################################################################
-# Run OPNsense bootstrap via SSH (Azure VM extensions don't work on FreeBSD)
+# Install OPNsense via CustomScriptForLinux (older v1.5 extension works on FreeBSD)
 ###############################################################################
-echo "--- Running OPNsense bootstrap via SSH ---"
-echo "    You will be prompted for the VM password."
-echo "    Bootstrap takes 10-15 minutes, then the VM reboots automatically."
+echo "--- Installing bash on FreeBSD (required for script extension) ---"
 
 PUBLIC_IP=$(az network public-ip show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$PIP_NAME" \
   --query ipAddress -o tsv)
 
+# Install bash via SSH (pipe password to sudo -S for non-interactive use)
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "${ADMIN_USER}@${PUBLIC_IP}" \
-  "cd /tmp && fetch -o configureopnsense.sh '${CONFIG_BASE_URL}/configureopnsense.sh' && fetch -o config-base.xml '${CONFIG_BASE_URL}/config-base.xml' && fetch -o get_nic_gw.py '${CONFIG_BASE_URL}/get_nic_gw.py' && sudo sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'"
-# SSH may return non-zero because the VM reboots and kills the connection
-echo "    SSH session ended (VM is rebooting after bootstrap)."
+  "echo '${ADMIN_PASSWORD}' | sudo -S pkg install -y bash"
+
+echo "--- Running OPNsense bootstrap via CustomScript extension ---"
+echo "    This will take 10-15 minutes..."
+
+az vm extension set \
+  --resource-group "$RESOURCE_GROUP" \
+  --vm-name "$VM_NAME" \
+  --name CustomScriptForLinux \
+  --publisher Microsoft.OSTCExtensions \
+  --version 1.5 \
+  --settings "{
+    \"fileUris\": [
+      \"${CONFIG_BASE_URL}/configureopnsense.sh\",
+      \"${CONFIG_BASE_URL}/config-base.xml\",
+      \"${CONFIG_BASE_URL}/get_nic_gw.py\"
+    ],
+    \"commandToExecute\": \"sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'\"
+  }" \
+  -o none || echo "    Extension reported non-zero exit (expected if VM rebooted during bootstrap)."
 
 ###############################################################################
 # Route Table — point LAN traffic through OPNsense

@@ -287,25 +287,48 @@ az vm create `
     -o none
 Assert-AzSuccess "Create VM"
 
-# Run OPNsense bootstrap via SSH (Azure VM extensions don't work on FreeBSD)
-Write-Host "--- Running OPNsense bootstrap via SSH ---" -ForegroundColor Cyan
-Write-Host "    You will be prompted for the VM password." -ForegroundColor DarkGray
-Write-Host "    Bootstrap takes 10-15 minutes, then the VM reboots automatically." -ForegroundColor DarkGray
+# Install OPNsense via CustomScriptForLinux (the older v1.5 extension works on FreeBSD)
+# First install bash which is required by the extension handler
+Write-Host "--- Installing bash on FreeBSD (required for script extension) ---"
 
 $publicIp = az network public-ip show `
     --resource-group $ResourceGroup `
     --name $PipName `
     --query ipAddress -o tsv
 
-$sshCommand = @"
-cd /tmp && fetch -o configureopnsense.sh '$ConfigBaseUrl/configureopnsense.sh' && fetch -o config-base.xml '$ConfigBaseUrl/config-base.xml' && fetch -o get_nic_gw.py '$ConfigBaseUrl/get_nic_gw.py' && sudo sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'
-"@
+# Use SSH to install bash first - pipe password to sudo via -S flag
+$installBash = "echo '$PlainPassword' | sudo -S pkg install -y bash"
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $installBash
+Assert-AzSuccess "Install bash on VM"
 
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $sshCommand
-# SSH may return non-zero because the VM reboots and kills the connection - that's expected
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "    SSH session ended (expected - VM is rebooting after bootstrap)." -ForegroundColor Yellow
+Write-Host "--- Running OPNsense bootstrap via CustomScript extension ---"
+Write-Host "    This will take 10-15 minutes..." -ForegroundColor DarkGray
+
+$settingsObj = @{
+    fileUris = @(
+        "$ConfigBaseUrl/configureopnsense.sh"
+        "$ConfigBaseUrl/config-base.xml"
+        "$ConfigBaseUrl/get_nic_gw.py"
+    )
+    commandToExecute = "sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'"
 }
+$settingsFile = Join-Path $env:TEMP "opnsense-extension-settings.json"
+$settingsObj | ConvertTo-Json -Depth 3 | Set-Content -Path $settingsFile -Encoding UTF8
+
+az vm extension set `
+    --resource-group $ResourceGroup `
+    --vm-name $VmName `
+    --name CustomScriptForLinux `
+    --publisher Microsoft.OSTCExtensions `
+    --version 1.5 `
+    --settings $settingsFile `
+    -o none
+# Extension may report failure because the VM reboots during bootstrap
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "    Extension reported non-zero exit (expected if VM rebooted during bootstrap)." -ForegroundColor Yellow
+}
+
+Remove-Item $settingsFile -ErrorAction SilentlyContinue
 
 # Route table
 Write-Host "--- Creating route table ---"
@@ -313,6 +336,10 @@ $lanNicIp = az network nic show `
     --resource-group $ResourceGroup `
     --name $NicLanName `
     --query "ipConfigurations[0].privateIpAddress" -o tsv
+if (-not $lanNicIp) {
+    throw "Could not determine LAN NIC IP address. Check that NIC '$NicLanName' exists."
+}
+Write-Host "    LAN NIC IP: $lanNicIp" -ForegroundColor DarkGray
 
 az network route-table create --resource-group $ResourceGroup --name $RtName -o none
 Assert-AzSuccess "Create route table"
