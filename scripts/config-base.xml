@@ -45,6 +45,7 @@
     <ssh>
       <enabled>enabled</enabled>
       <permitrootlogin>1</permitrootlogin>
+      <passwordauth>1</passwordauth>
     </ssh>
     <webgui>
       <protocol>https</protocol>
