@@ -239,6 +239,15 @@ PUBLIC_IP=$(az network public-ip show \
   --name "$PIP_NAME" \
   --query ipAddress -o tsv)
 
+# Calculate WAN subnet gateway IP (first usable IP in subnet)
+WAN_SUBNET_PREFIX=$(az network vnet subnet show \
+  --resource-group "$RESOURCE_GROUP" \
+  --vnet-name "$VNET_NAME" \
+  --name "$SUBNET_WAN_NAME" \
+  --query "addressPrefix" -o tsv)
+GATEWAY_IP=$(echo "$WAN_SUBNET_PREFIX" | sed 's|/.*||; s|\.[0-9]*$|.1|')
+echo "    WAN Gateway IP: $GATEWAY_IP"
+
 # Install bash via SSH (pipe password to sudo -S for non-interactive use)
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "${ADMIN_USER}@${PUBLIC_IP}" \
@@ -256,10 +265,9 @@ az vm extension set \
   --settings "{
     \"fileUris\": [
       \"${CONFIG_BASE_URL}/configureopnsense.sh\",
-      \"${CONFIG_BASE_URL}/config-base.xml\",
-      \"${CONFIG_BASE_URL}/get_nic_gw.py\"
+      \"${CONFIG_BASE_URL}/config-base.xml\"
     ],
-    \"commandToExecute\": \"sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'\"
+    \"commandToExecute\": \"sh configureopnsense.sh '${CONFIG_BASE_URL}' '${OPNSENSE_VERSION}' '${GATEWAY_IP}' '${PUBLIC_IP}'\"
   }" \
   -o none || echo "    Extension reported non-zero exit (expected if VM rebooted during bootstrap)."
 

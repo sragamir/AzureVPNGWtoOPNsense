@@ -296,6 +296,16 @@ $publicIp = az network public-ip show `
     --name $PipName `
     --query ipAddress -o tsv
 
+# Calculate WAN subnet gateway IP (first usable IP in subnet)
+$wanSubnetPrefix = az network vnet subnet show `
+    --resource-group $ResourceGroup `
+    --vnet-name $VnetName `
+    --name $SubnetWanName `
+    --query "addressPrefix" -o tsv
+# Extract gateway: replace last octet with .1
+$gatewayIp = ($wanSubnetPrefix -replace '/\d+$','') -replace '\.\d+$','.1'
+Write-Host "    WAN Gateway IP: $gatewayIp" -ForegroundColor DarkGray
+
 # Use SSH to install bash first - pipe password to sudo via -S flag
 $installBash = "echo '$PlainPassword' | sudo -S pkg install -y bash"
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $installBash
@@ -308,9 +318,8 @@ $settingsObj = @{
     fileUris = @(
         "$ConfigBaseUrl/configureopnsense.sh"
         "$ConfigBaseUrl/config-base.xml"
-        "$ConfigBaseUrl/get_nic_gw.py"
     )
-    commandToExecute = "sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'"
+    commandToExecute = "sh configureopnsense.sh '$ConfigBaseUrl' '$OpnsenseVersion' '$gatewayIp' '$publicIp'"
 }
 $settingsFile = Join-Path $env:TEMP "opnsense-extension-settings.json"
 $settingsObj | ConvertTo-Json -Depth 3 | Set-Content -Path $settingsFile -Encoding UTF8
