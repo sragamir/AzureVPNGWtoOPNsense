@@ -46,7 +46,7 @@ PIP_NAME="pip-opnsense"
 NIC_WAN_NAME="nic-opnsense-wan"
 NIC_LAN_NAME="nic-opnsense-lan"
 RT_NAME="rt-opnsense-lan"
-OPNSENSE_VERSION="${OPNSENSE_VERSION:-26.1}"
+OPNSENSE_VERSION="${OPNSENSE_VERSION:-25.1}"
 HOSTNAME_LABEL="${HOSTNAME_LABEL:-opn-vpn-01}"
 CONFIG_BASE_URL="${CONFIG_BASE_URL:-https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts}"
 

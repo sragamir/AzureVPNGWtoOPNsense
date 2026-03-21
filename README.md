@@ -125,7 +125,7 @@ After testing, capture the configured VM as a reusable image for quick deploymen
 | VM Size | Standard_B2ts_v2 (~$30/month) |
 | Location | westeurope |
 | FreeBSD Image | 14.1-RELEASE (Gen2, ZFS) |
-| OPNsense Version | 26.1 |
+| OPNsense Version | 25.1 |
 | VNet CIDR | 10.200.0.0/16 |
 | WAN Subnet | 10.200.0.0/24 |
 | LAN Subnet | 10.200.1.0/24 |

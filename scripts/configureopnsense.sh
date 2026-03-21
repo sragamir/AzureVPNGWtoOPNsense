@@ -7,7 +7,7 @@
 #   $2 = hostname (e.g. "opn-vpn-01")
 #   $3 = config base URL (where config-base.xml and get_nic_gw.py are hosted)
 
-OPNSENSE_VERSION="${1:-26.1}"
+OPNSENSE_VERSION="${1:-25.1}"
 HOSTNAME_LABEL="${2:-opnsense}"
 CONFIG_BASE_URL="${3:-https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts}"
 
