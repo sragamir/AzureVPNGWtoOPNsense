@@ -230,24 +230,22 @@ az vm create \
   -o none
 
 ###############################################################################
-# CustomScript Extension — install OPNsense
+# Run OPNsense bootstrap via run-command (CustomScript extension doesn't work on FreeBSD)
 ###############################################################################
-echo "--- Running OPNsense bootstrap via CustomScript extension ---"
-az vm extension set \
+echo "--- Running OPNsense bootstrap via run-command ---"
+echo "    This will take 10-15 minutes..."
+
+az vm run-command invoke \
   --resource-group "$RESOURCE_GROUP" \
-  --vm-name "$VM_NAME" \
-  --name CustomScript \
-  --publisher Microsoft.Azure.Extensions \
-  --version 2.1 \
-  --settings "{
-    \"fileUris\": [
-      \"${CONFIG_BASE_URL}/configureopnsense.sh\",
-      \"${CONFIG_BASE_URL}/config-base.xml\",
-      \"${CONFIG_BASE_URL}/get_nic_gw.py\"
-    ],
-    \"commandToExecute\": \"sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'\"
-  }" \
-  -o none
+  --name "$VM_NAME" \
+  --command-id RunShellScript \
+  --scripts \
+    "cd /tmp" \
+    "fetch -o configureopnsense.sh '${CONFIG_BASE_URL}/configureopnsense.sh'" \
+    "fetch -o config-base.xml '${CONFIG_BASE_URL}/config-base.xml'" \
+    "fetch -o get_nic_gw.py '${CONFIG_BASE_URL}/get_nic_gw.py'" \
+    "sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'" \
+  -o table
 
 ###############################################################################
 # Route Table — point LAN traffic through OPNsense

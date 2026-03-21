@@ -287,31 +287,30 @@ az vm create `
     -o none
 Assert-AzSuccess "Create VM"
 
-# CustomScript extension — write settings to a temp file to avoid PS quoting issues
-Write-Host "--- Running OPNsense bootstrap via CustomScript extension ---"
-$settingsObj = @{
-    fileUris = @(
-        "$ConfigBaseUrl/configureopnsense.sh"
-        "$ConfigBaseUrl/config-base.xml"
-        "$ConfigBaseUrl/get_nic_gw.py"
-    )
-    commandToExecute = "sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'"
-}
-$settingsFile = Join-Path $env:TEMP "opnsense-extension-settings.json"
-$settingsObj | ConvertTo-Json -Depth 3 | Set-Content -Path $settingsFile -Encoding UTF8
+# Run OPNsense bootstrap via VM run-command (CustomScript extension doesn't work on FreeBSD)
+Write-Host "--- Running OPNsense bootstrap via run-command ---"
+Write-Host "    This will take 10-15 minutes..." -ForegroundColor DarkGray
 
-az vm extension set `
+$bootstrapScript = @"
+cd /tmp
+fetch -o configureopnsense.sh '$ConfigBaseUrl/configureopnsense.sh'
+fetch -o config-base.xml '$ConfigBaseUrl/config-base.xml'
+fetch -o get_nic_gw.py '$ConfigBaseUrl/get_nic_gw.py'
+sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'
+"@
+
+$scriptFile = Join-Path $env:TEMP "opnsense-bootstrap.sh"
+$bootstrapScript | Set-Content -Path $scriptFile -Encoding UTF8 -NoNewline
+
+az vm run-command invoke `
     --resource-group $ResourceGroup `
-    --vm-name $VmName `
-    --name CustomScript `
-    --publisher Microsoft.Azure.Extensions `
-    --version 2.1 `
-    --settings $settingsFile `
-    -o none
-Assert-AzSuccess "Set CustomScript extension"
+    --name $VmName `
+    --command-id RunShellScript `
+    --scripts "@$scriptFile" `
+    -o table
+Assert-AzSuccess "Run OPNsense bootstrap"
 
-# Clean up temp file
-Remove-Item $settingsFile -ErrorAction SilentlyContinue
+Remove-Item $scriptFile -ErrorAction SilentlyContinue
 
 # Route table
 Write-Host "--- Creating route table ---"
