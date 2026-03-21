@@ -22,7 +22,7 @@ echo "Version: $OPNSENSE_VERSION | Hostname: $HOSTNAME_LABEL"
 ###############################################################################
 cd /tmp || exit 1
 fetch -o opnsense-bootstrap.sh \
-  https://raw.githubusercontent.com/opnsense/update/master/src/bootstrap/opnsense-bootstrap.sh
+  https://raw.githubusercontent.com/opnsense/update/master/src/bootstrap/opnsense-bootstrap.sh.in
 
 # Remove set -e so the script doesn't abort on non-fatal errors
 sed -i '' 's/^set -e/#set -e/' opnsense-bootstrap.sh
