@@ -20,7 +20,7 @@
     VM size. Default: Standard_B2ts_v2
 
 .PARAMETER UseExistingVnet
-    If set, skips VNet and subnet creation — uses existing ones.
+    If set, skips VNet and subnet creation - uses existing ones.
 
 .PARAMETER SubnetWanName
     Name of the WAN subnet. Default: snet-wan
@@ -226,7 +226,7 @@ foreach ($rule in $nsgRules) {
         -o none 2>$null
 }
 
-# ESP rule (separate — no port)
+# ESP rule (separate - no port)
 az network nsg rule create `
     --resource-group $ResourceGroup `
     --nsg-name $NsgName `
@@ -302,9 +302,9 @@ cd /tmp && fetch -o configureopnsense.sh '$ConfigBaseUrl/configureopnsense.sh' &
 "@
 
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $sshCommand
-# SSH may return non-zero because the VM reboots and kills the connection — that's expected
+# SSH may return non-zero because the VM reboots and kills the connection - that's expected
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "    SSH session ended (expected — VM is rebooting after bootstrap)." -ForegroundColor Yellow
+    Write-Host "    SSH session ended (expected - VM is rebooting after bootstrap)." -ForegroundColor Yellow
 }
 
 # Route table
