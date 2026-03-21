@@ -2,3 +2,4 @@ params.env
 *.pem
 *.key
 .claude/
+docs/raw-info.txt

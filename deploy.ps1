@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     PowerShell wrapper for OPNsense VM deployment using Azure CLI.
-    Calls the same az commands as deploy.sh with PowerShell parameter validation.
+    Loads defaults from params.env if present, then applies CLI parameters.
 
 .PARAMETER SubscriptionId
     Azure subscription ID (required).
@@ -22,51 +22,108 @@
     .\deploy.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 
 .EXAMPLE
-    .\deploy.ps1 -SubscriptionId $sub -Location northeurope -VmSize Standard_B2ms
+    .\deploy.ps1 -SubscriptionId $sub -Location uksouth -VmSize Standard_B2als_v2
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$')]
     [string]$SubscriptionId,
-
-    [string]$ResourceGroup = "rg-opnsense-vpn",
-    [string]$Location = "westeurope",
-    [string]$VnetName = "vnet-opnsense",
-    [string]$VnetCidr = "10.200.0.0/16",
-    [string]$SubnetWanCidr = "10.200.0.0/24",
-    [string]$SubnetLanCidr = "10.200.1.0/24",
-    [string]$VmName = "vm-opnsense-01",
-
-    [ValidateSet("Standard_B2s", "Standard_B2ms", "Standard_B4ms", "Standard_D2s_v3")]
-    [string]$VmSize = "Standard_B2s",
-
-    [string]$AdminUser = "azureadmin",
-
+    [string]$ResourceGroup,
+    [string]$Location,
+    [string]$VnetName,
+    [string]$VnetCidr,
+    [string]$SubnetWanCidr,
+    [string]$SubnetLanCidr,
+    [string]$VmName,
+    [string]$VmSize,
+    [string]$AdminUser,
     [SecureString]$AdminPassword,
-    [string]$OpnsenseVersion = "26.1",
-    [string]$HostnameLabel = "opn-vpn-01",
-    [string]$ConfigBaseUrl = "https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts",
-    [string]$FreeBsdUrn = "thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0"
+    [string]$OpnsenseVersion,
+    [string]$HostnameLabel,
+    [string]$ConfigBaseUrl,
+    [string]$FreeBsdUrn
 )
 
 $ErrorActionPreference = "Stop"
 
+###############################################################################
+# Load params.env if it exists (key=value format, ignoring comments)
+###############################################################################
+$paramsFile = Join-Path $PSScriptRoot "params.env"
+$envVars = @{}
+if (Test-Path $paramsFile) {
+    Write-Host "Loading parameters from params.env..." -ForegroundColor DarkGray
+    Get-Content $paramsFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith('#')) {
+            if ($line -match '^(\w+)\s*=\s*"?(.*?)"?\s*$') {
+                $envVars[$Matches[1]] = $Matches[2]
+            }
+        }
+    }
+}
+
+# Apply defaults: CLI param > params.env > hardcoded default
+function Resolve-Param([string]$CliValue, [string]$EnvKey, [string]$Default) {
+    if ($CliValue) { return $CliValue }
+    if ($envVars.ContainsKey($EnvKey) -and $envVars[$EnvKey]) { return $envVars[$EnvKey] }
+    return $Default
+}
+
+$SubscriptionId  = Resolve-Param $SubscriptionId  "SUBSCRIPTION_ID"  ""
+$ResourceGroup   = Resolve-Param $ResourceGroup   "RESOURCE_GROUP"   "rg-opnsense-vpn"
+$Location        = Resolve-Param $Location        "LOCATION"         "westeurope"
+$VnetName        = Resolve-Param $VnetName        "VNET_NAME"        "vnet-opnsense"
+$VnetCidr        = Resolve-Param $VnetCidr        "VNET_CIDR"        "10.200.0.0/16"
+$SubnetWanCidr   = Resolve-Param $SubnetWanCidr   "SUBNET_WAN_CIDR"  "10.200.0.0/24"
+$SubnetLanCidr   = Resolve-Param $SubnetLanCidr   "SUBNET_LAN_CIDR"  "10.200.1.0/24"
+$VmName          = Resolve-Param $VmName          "VM_NAME"          "vm-opnsense-01"
+$VmSize          = Resolve-Param $VmSize          "VM_SIZE"          "Standard_B2ts_v2"
+$AdminUser       = Resolve-Param $AdminUser       "ADMIN_USER"       "azureadmin"
+$OpnsenseVersion = Resolve-Param $OpnsenseVersion "OPNSENSE_VERSION" "26.1"
+$HostnameLabel   = Resolve-Param $HostnameLabel   "HOSTNAME_LABEL"   "opn-vpn-01"
+$ConfigBaseUrl   = Resolve-Param $ConfigBaseUrl   "CONFIG_BASE_URL"  "https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts"
+$FreeBsdUrn      = Resolve-Param $FreeBsdUrn      "FREEBSD_URN"      "thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0"
+
+# Validate subscription ID
+if (-not $SubscriptionId) {
+    $SubscriptionId = Read-Host -Prompt "Enter Azure Subscription ID"
+}
+if ($SubscriptionId -notmatch '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
+    throw "Invalid Subscription ID format: $SubscriptionId"
+}
+
 $SubnetWanName = "snet-wan"
 $SubnetLanName = "snet-lan"
-$NsgName = "nsg-opnsense"
-$PipName = "pip-opnsense"
-$NicWanName = "nic-opnsense-wan"
-$NicLanName = "nic-opnsense-lan"
-$RtName = "rt-opnsense-lan"
+$NsgName       = "nsg-opnsense"
+$PipName       = "pip-opnsense"
+$NicWanName    = "nic-opnsense-wan"
+$NicLanName    = "nic-opnsense-lan"
+$RtName        = "rt-opnsense-lan"
 
-# Prompt for password if not provided
+###############################################################################
+# Password
+###############################################################################
 if (-not $AdminPassword) {
-    $AdminPassword = Read-Host -Prompt "Enter admin password for VM" -AsSecureString
+    # Check params.env for ADMIN_PASSWORD
+    $envPwd = if ($envVars.ContainsKey("ADMIN_PASSWORD")) { $envVars["ADMIN_PASSWORD"] } else { "" }
+    if ($envPwd) {
+        $AdminPassword = ConvertTo-SecureString $envPwd -AsPlainText -Force
+    } else {
+        $AdminPassword = Read-Host -Prompt "Enter admin password for VM (12+ chars, upper+lower+digit+special)" -AsSecureString
+    }
 }
 $PlainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
     [Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
+
+###############################################################################
+# Helper to abort on az failure
+###############################################################################
+function Assert-AzSuccess([string]$Step) {
+    if ($LASTEXITCODE -ne 0) {
+        throw "FAILED at: $Step (exit code $LASTEXITCODE)"
+    }
+}
 
 Write-Host "=== OPNsense VPN VM Deployment ===" -ForegroundColor Cyan
 Write-Host "Subscription: $SubscriptionId"
@@ -76,7 +133,7 @@ Write-Host ""
 
 # Set subscription
 az account set --subscription $SubscriptionId
-if ($LASTEXITCODE -ne 0) { throw "Failed to set subscription" }
+Assert-AzSuccess "Set subscription"
 
 # Accept FreeBSD Marketplace terms
 Write-Host "--- Accepting FreeBSD Marketplace terms ---"
@@ -85,6 +142,7 @@ az vm image terms accept --urn $FreeBsdUrn -o none 2>$null
 # Resource Group
 Write-Host "--- Creating resource group ---"
 az group create --name $ResourceGroup --location $Location -o none
+Assert-AzSuccess "Create resource group"
 
 # VNet + Subnets
 Write-Host "--- Creating VNet and subnets ---"
@@ -95,6 +153,7 @@ az network vnet create `
     --subnet-name $SubnetWanName `
     --subnet-prefix $SubnetWanCidr `
     -o none
+Assert-AzSuccess "Create VNet"
 
 az network vnet subnet create `
     --resource-group $ResourceGroup `
@@ -106,6 +165,7 @@ az network vnet subnet create `
 # NSG
 Write-Host "--- Creating NSG ---"
 az network nsg create --resource-group $ResourceGroup --name $NsgName -o none
+Assert-AzSuccess "Create NSG"
 
 $nsgRules = @(
     @{ Name = "Allow-SSH";          Priority = 100; Protocol = "Tcp"; Port = "22" }
@@ -152,6 +212,7 @@ az network public-ip create `
     --sku Standard `
     --allocation-method Static `
     -o none
+Assert-AzSuccess "Create Public IP"
 
 # NICs
 Write-Host "--- Creating NICs ---"
@@ -164,6 +225,7 @@ az network nic create `
     --public-ip-address $PipName `
     --ip-forwarding true `
     -o none
+Assert-AzSuccess "Create WAN NIC"
 
 az network nic create `
     --resource-group $ResourceGroup `
@@ -172,6 +234,7 @@ az network nic create `
     --subnet $SubnetLanName `
     --ip-forwarding true `
     -o none
+Assert-AzSuccess "Create LAN NIC"
 
 # VM
 Write-Host "--- Creating FreeBSD VM ---"
@@ -188,17 +251,20 @@ az vm create `
     --storage-sku StandardSSD_LRS `
     --security-type Standard `
     -o none
+Assert-AzSuccess "Create VM"
 
-# CustomScript extension
+# CustomScript extension — write settings to a temp file to avoid PS quoting issues
 Write-Host "--- Running OPNsense bootstrap via CustomScript extension ---"
-$extensionSettings = @{
+$settingsObj = @{
     fileUris = @(
-        "$ConfigBaseUrl/configureopnsense.sh",
-        "$ConfigBaseUrl/config-base.xml",
+        "$ConfigBaseUrl/configureopnsense.sh"
+        "$ConfigBaseUrl/config-base.xml"
         "$ConfigBaseUrl/get_nic_gw.py"
     )
     commandToExecute = "sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'"
-} | ConvertTo-Json -Compress
+}
+$settingsFile = Join-Path $env:TEMP "opnsense-extension-settings.json"
+$settingsObj | ConvertTo-Json -Depth 3 | Set-Content -Path $settingsFile -Encoding UTF8
 
 az vm extension set `
     --resource-group $ResourceGroup `
@@ -206,17 +272,22 @@ az vm extension set `
     --name CustomScript `
     --publisher Microsoft.Azure.Extensions `
     --version 2.1 `
-    --settings $extensionSettings `
+    --settings $settingsFile `
     -o none
+Assert-AzSuccess "Set CustomScript extension"
+
+# Clean up temp file
+Remove-Item $settingsFile -ErrorAction SilentlyContinue
 
 # Route table
 Write-Host "--- Creating route table ---"
 $lanNicIp = az network nic show `
     --resource-group $ResourceGroup `
     --name $NicLanName `
-    --query 'ipConfigurations[0].privateIpAddress' -o tsv
+    --query "ipConfigurations[0].privateIpAddress" -o tsv
 
 az network route-table create --resource-group $ResourceGroup --name $RtName -o none
+Assert-AzSuccess "Create route table"
 
 az network route-table route create `
     --resource-group $ResourceGroup `
@@ -226,6 +297,7 @@ az network route-table route create `
     --next-hop-type VirtualAppliance `
     --next-hop-ip-address $lanNicIp `
     -o none
+Assert-AzSuccess "Create route"
 
 az network vnet subnet update `
     --resource-group $ResourceGroup `
@@ -233,6 +305,7 @@ az network vnet subnet update `
     --name $SubnetLanName `
     --route-table $RtName `
     -o none
+Assert-AzSuccess "Associate route table"
 
 # Output
 $publicIp = az network public-ip show `

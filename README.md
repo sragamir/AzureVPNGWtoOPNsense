@@ -30,7 +30,7 @@ Internet ──────────┤  ┌──────────┐
 |---|---|---|
 | Azure VNG Basic | ~$27 | IPsec only |
 | Azure VNG VpnGw1 | ~$140 | IPsec, OpenVPN |
-| **OPNsense on B2s** | **~$30** | **All (WG, IPsec, OVPN, L2TP)** |
+| **OPNsense on B2ts_v2** | **~$30** | **All (WG, IPsec, OVPN, L2TP)** |
 
 ## Quick Start
 
@@ -122,7 +122,7 @@ After testing, capture the configured VM as a reusable image for quick deploymen
 
 | Parameter | Default |
 |---|---|
-| VM Size | Standard_B2s (~$30/month) |
+| VM Size | Standard_B2ts_v2 (~$30/month) |
 | Location | westeurope |
 | FreeBSD Image | 14.1-RELEASE (Gen2, ZFS) |
 | OPNsense Version | 26.1 |
