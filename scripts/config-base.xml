@@ -1,0 +1,177 @@
+<?xml version="1.0"?>
+<opnsense>
+  <theme>opnsense</theme>
+  <sysctl>
+    <item>
+      <descr>Increase UFS read-ahead speeds</descr>
+      <tunable>vfs.read_max</tunable>
+      <value>32</value>
+    </item>
+    <item>
+      <descr>Disable TCP delayed ACK</descr>
+      <tunable>net.inet.tcp.delayed_ack</tunable>
+      <value>0</value>
+    </item>
+    <item>
+      <descr>Allow IP forwarding</descr>
+      <tunable>net.inet.ip.forwarding</tunable>
+      <value>1</value>
+    </item>
+  </sysctl>
+  <system>
+    <hostname>%%HOSTNAME%%</hostname>
+    <domain>local</domain>
+    <dnsserver>168.63.129.16</dnsserver>
+    <group>
+      <name>admins</name>
+      <description>System Administrators</description>
+      <scope>system</scope>
+      <gid>1999</gid>
+      <member>0</member>
+      <priv>page-all</priv>
+    </group>
+    <user>
+      <name>root</name>
+      <descr>System Administrator</descr>
+      <scope>system</scope>
+      <uid>0</uid>
+      <password>$2y$10$YRVoF4SgskIsrXOvOQjGieB9XqHPRra9R7d80B3BZdbY/j21TwBfS</password>
+      <shell>/bin/sh</shell>
+    </user>
+    <nextuid>2000</nextuid>
+    <nextgid>2000</nextgid>
+    <timezone>Etc/UTC</timezone>
+    <language>en_US</language>
+    <ssh>
+      <enabled>enabled</enabled>
+      <permitrootlogin>1</permitrootlogin>
+    </ssh>
+    <webgui>
+      <protocol>https</protocol>
+      <ssl-certref>selfcert</ssl-certref>
+    </webgui>
+  </system>
+  <interfaces>
+    <wan>
+      <if>hn0</if>
+      <descr>WAN</descr>
+      <enable>1</enable>
+      <ipaddr>dhcp</ipaddr>
+      <blockbogons>1</blockbogons>
+    </wan>
+    <lan>
+      <if>hn1</if>
+      <descr>LAN</descr>
+      <enable>1</enable>
+      <ipaddr>dhcp</ipaddr>
+    </lan>
+  </interfaces>
+  <nat>
+    <outbound>
+      <mode>hybrid</mode>
+    </outbound>
+  </nat>
+  <filter>
+    <!-- Allow SSH on WAN -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>tcp</protocol>
+      <destination>
+        <port>22</port>
+      </destination>
+      <descr>Allow SSH</descr>
+    </rule>
+    <!-- Allow HTTPS WebGUI on WAN -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>tcp</protocol>
+      <destination>
+        <port>443</port>
+      </destination>
+      <descr>Allow HTTPS WebGUI</descr>
+    </rule>
+    <!-- Allow WireGuard -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <destination>
+        <port>51820</port>
+      </destination>
+      <descr>Allow WireGuard</descr>
+    </rule>
+    <!-- Allow IPsec IKE -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <destination>
+        <port>500</port>
+      </destination>
+      <descr>Allow IPsec IKE</descr>
+    </rule>
+    <!-- Allow IPsec NAT-T -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <destination>
+        <port>4500</port>
+      </destination>
+      <descr>Allow IPsec NAT-T</descr>
+    </rule>
+    <!-- Allow OpenVPN -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <destination>
+        <port>1194</port>
+      </destination>
+      <descr>Allow OpenVPN</descr>
+    </rule>
+    <!-- Allow L2TP -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>udp</protocol>
+      <destination>
+        <port>1701</port>
+      </destination>
+      <descr>Allow L2TP</descr>
+    </rule>
+    <!-- Allow ESP (IPsec) -->
+    <rule>
+      <type>pass</type>
+      <interface>wan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <protocol>esp</protocol>
+      <descr>Allow ESP</descr>
+    </rule>
+    <!-- Default allow all on LAN -->
+    <rule>
+      <type>pass</type>
+      <interface>lan</interface>
+      <ipprotocol>inet</ipprotocol>
+      <descr>Default allow LAN</descr>
+    </rule>
+  </filter>
+  <gateways>
+    <gateway_item>
+      <interface>wan</interface>
+      <gateway>%%TRUSTED_GW%%</gateway>
+      <name>WAN_GW</name>
+      <descr>Azure WAN Gateway</descr>
+      <defaultgw>1</defaultgw>
+    </gateway_item>
+  </gateways>
+</opnsense>

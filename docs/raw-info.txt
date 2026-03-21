@@ -1,0 +1,26 @@
+I need to prepare solution for azure that will replace Azure VPN GW. my idea is to run pfsense, opensense, mikrotik ... as VM because i need to run it for lower price ; I need step by step guide and comparison for best solutions that are for free (paid only for azure consumption). i have several subscriptions where i need to run site to site vpns on l2tp, open vpn or wireguard...
+
+Best option: FreeBSD + bootstrap script (no VHD needed)
+OPNsense is based on FreeBSD, which is a free official OS image publisher in Azure. The approach is to deploy a FreeBSD 14.1 VM and install OPNsense using the opnsense-bootstrap script. GitHub This means no VHD download, no upload, no storage account — just a free FreeBSD VM from the Marketplace and one script.
+Steps:
+
+Accept the FreeBSD free terms once per subscription (Azure CLI):
+
+bashaz vm image terms accept --urn thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0 -o none
+
+Create a VM from the FreeBSD 14.1 Marketplace image (free, no license fee)
+SSH in and run the OPNsense bootstrap:
+
+bashfetch https://raw.githubusercontent.com/opnsense/update/master/src/bootstrap/opnsense-bootstrap.sh
+sh ./opnsense-bootstrap.sh
+
+Reboot → OPNsense is installed, access via https://<public-ip>
+
+There is an existing GitHub template at github.com/dmauser/opnazure that automates this entire deployment including VNet, two NICs, NSG rules, and optionally Active-Active HA with load balancers. GitHub You can deploy it with one click from the repo's README.
+
+If you still want the VHD route
+A community GitHub repo at github.com/maurice-w/opnsense-vm-images provides pre-built OPNsense VHDX images for Hyper-V (amd64), which are the closest format to what Azure needs. GitHub You'd download the .vhdx, convert to .vhd (fixed size), upload to Azure Blob Storage, create a managed disk, then create a VM from it. This is more work with no real benefit over the bootstrap method above.
+
+Quickest path summary
+MethodWhere to get itEffortFreeBSD + bootstrapAzure Marketplace (free) + GitHub script★☆☆ EasyVHDX downloadgithub.com/maurice-w/opnsense-vm-images★★★ HardOVA (Deciso)Paid, from Deciso directly★★☆ + costs money
+Recommendation: go with the FreeBSD bootstrap method — it's free, it's supported, and it's what the Microsoft Tech Community guide recommends. Want me to write out the full step-by-step Azure CLI deployment for this approach?

@@ -1,0 +1,4 @@
+params.env
+*.pem
+*.key
+.claude/
