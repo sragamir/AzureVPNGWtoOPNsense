@@ -3,7 +3,7 @@
     Deploy an OPNsense VM to replace Azure VPN Gateway.
 
 .DESCRIPTION
-    PowerShell wrapper for OPNsense VM deployment using Azure CLI.
+    PowerShell deployment script for OPNsense VM using Azure CLI.
     Loads defaults from params.env if present, then applies CLI parameters.
     Supports deploying into an existing VNet/subnets.
 
@@ -22,18 +22,11 @@
 .PARAMETER UseExistingVnet
     If set, skips VNet and subnet creation - uses existing ones.
 
-.PARAMETER SubnetWanName
-    Name of the WAN subnet. Default: snet-wan
-
-.PARAMETER SubnetLanName
-    Name of the LAN subnet. Default: snet-lan
-
 .EXAMPLE
     .\deploy.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 
 .EXAMPLE
-    # Deploy into existing VNet with existing subnets
-    .\deploy.ps1 -SubscriptionId $sub -VnetName "existing-vnet" -SubnetWanName "default" -SubnetLanName "backend" -UseExistingVnet
+    .\deploy.ps1 -SubscriptionId $sub -VnetName "existing-vnet" -SubnetWanName "WAN" -SubnetLanName "default" -UseExistingVnet
 #>
 
 [CmdletBinding()]
@@ -70,7 +63,6 @@ if (Test-Path $paramsFile) {
     Get-Content $paramsFile | ForEach-Object {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith('#')) {
-            # Match KEY="VALUE" or KEY=VALUE, strip inline comments after closing quote
             if ($line -match '^(\w+)\s*=\s*"([^"]*)"') {
                 $envVars[$Matches[1]] = $Matches[2]
             } elseif ($line -match '^(\w+)\s*=\s*(\S+)') {
@@ -96,7 +88,7 @@ $SubnetWanName   = Resolve-Param $SubnetWanName   "SUBNET_WAN_NAME"  "snet-wan"
 $SubnetWanCidr   = Resolve-Param $SubnetWanCidr   "SUBNET_WAN_CIDR"  "10.200.0.0/24"
 $SubnetLanName   = Resolve-Param $SubnetLanName   "SUBNET_LAN_NAME"  "snet-lan"
 $SubnetLanCidr   = Resolve-Param $SubnetLanCidr   "SUBNET_LAN_CIDR"  "10.200.1.0/24"
-$VmName          = Resolve-Param $VmName          "VM_NAME"          "vm-opnsense-01"
+$VmName          = Resolve-Param $VmName          "VM_NAME"          "opnsense-01-vm"
 $VmSize          = Resolve-Param $VmSize          "VM_SIZE"          "Standard_B2ts_v2"
 $AdminUser       = Resolve-Param $AdminUser       "ADMIN_USER"       "azureadmin"
 $OpnsenseVersion = Resolve-Param $OpnsenseVersion "OPNSENSE_VERSION" "25.1"
@@ -104,7 +96,6 @@ $HostnameLabel   = Resolve-Param $HostnameLabel   "HOSTNAME_LABEL"   "opn-vpn-01
 $ConfigBaseUrl   = Resolve-Param $ConfigBaseUrl   "CONFIG_BASE_URL"  "https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts"
 $FreeBsdUrn      = Resolve-Param $FreeBsdUrn      "FREEBSD_URN"      "thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0"
 
-# Also check USE_EXISTING_VNET from params.env
 if (-not $UseExistingVnet -and $envVars.ContainsKey("USE_EXISTING_VNET") -and $envVars["USE_EXISTING_VNET"] -eq "true") {
     $UseExistingVnet = [switch]::new($true)
 }
@@ -117,11 +108,13 @@ if ($SubscriptionId -notmatch '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
     throw "Invalid Subscription ID format: $SubscriptionId"
 }
 
-$NsgName       = "nsg-opnsense"
-$PipName       = "pip-opnsense"
-$NicWanName    = "nic-opnsense-wan"
-$NicLanName    = "nic-opnsense-lan"
-$RtName        = "rt-opnsense-lan"
+# Derive resource names from VM name prefix (e.g. opnsense-01-vm -> opnsense-01-nsg)
+$namePrefix = $VmName -replace '-vm$',''
+$NsgName    = "$namePrefix-nsg"
+$PipName    = "$namePrefix-pip"
+$NicWanName = "$namePrefix-nic-wan"
+$NicLanName = "$namePrefix-nic-lan"
+$RtName     = "$namePrefix-rt"
 
 ###############################################################################
 # Password
@@ -173,7 +166,6 @@ Assert-AzSuccess "Create resource group"
 # VNet + Subnets
 if ($UseExistingVnet) {
     Write-Host "--- Using existing VNet '$VnetName' with subnets '$SubnetWanName' and '$SubnetLanName' ---"
-    # Verify the VNet and subnets exist
     az network vnet subnet show --resource-group $ResourceGroup --vnet-name $VnetName --name $SubnetWanName -o none
     Assert-AzSuccess "Verify WAN subnet '$SubnetWanName' exists"
     az network vnet subnet show --resource-group $ResourceGroup --vnet-name $VnetName --name $SubnetLanName -o none
@@ -226,7 +218,6 @@ foreach ($rule in $nsgRules) {
         -o none 2>$null
 }
 
-# ESP rule (separate - no port)
 az network nsg rule create `
     --resource-group $ResourceGroup `
     --nsg-name $NsgName `
@@ -287,30 +278,27 @@ az vm create `
     -o none
 Assert-AzSuccess "Create VM"
 
-# Install OPNsense via CustomScriptForLinux (the older v1.5 extension works on FreeBSD)
-# First install bash which is required by the extension handler
-Write-Host "--- Installing bash on FreeBSD (required for script extension) ---"
-
+# Get public IP and calculate gateway
 $publicIp = az network public-ip show `
     --resource-group $ResourceGroup `
     --name $PipName `
     --query ipAddress -o tsv
 
-# Calculate WAN subnet gateway IP (first usable IP in subnet)
 $wanSubnetPrefix = az network vnet subnet show `
     --resource-group $ResourceGroup `
     --vnet-name $VnetName `
     --name $SubnetWanName `
     --query "addressPrefix" -o tsv
-# Extract gateway: replace last octet with .1
 $gatewayIp = ($wanSubnetPrefix -replace '/\d+$','') -replace '\.\d+$','.1'
 Write-Host "    WAN Gateway IP: $gatewayIp" -ForegroundColor DarkGray
 
-# Use SSH to install bash first - pipe password to sudo via -S flag
+# Install bash via SSH (required by CustomScript extension handler)
+Write-Host "--- Installing bash on FreeBSD ---"
 $installBash = "echo '$PlainPassword' | sudo -S pkg install -y bash"
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $installBash
 Assert-AzSuccess "Install bash on VM"
 
+# Run OPNsense bootstrap via CustomScriptForLinux v1.5 (works on FreeBSD)
 Write-Host "--- Running OPNsense bootstrap via CustomScript extension ---"
 Write-Host "    This will take 10-15 minutes..." -ForegroundColor DarkGray
 
@@ -332,28 +320,26 @@ az vm extension set `
     --version 1.5 `
     --settings $settingsFile `
     -o none
-# Extension may report failure because the VM reboots during bootstrap
 if ($LASTEXITCODE -ne 0) {
     Write-Host "    Extension reported non-zero exit (expected if VM rebooted during bootstrap)." -ForegroundColor Yellow
 }
 
 Remove-Item $settingsFile -ErrorAction SilentlyContinue
 
-# Route table (create independently of extension - NICs already exist)
+# Route table
 Write-Host "--- Creating route table ---"
-$LASTEXITCODE = 0  # Reset after extension which may have non-zero exit
+$LASTEXITCODE = 0
 $lanNicIp = (az network nic show `
     --resource-group $ResourceGroup `
     --name $NicLanName `
     --query "ipConfigurations[0].privateIpAddress" -o tsv 2>$null)
+
 if (-not $lanNicIp) {
-    Write-Host "    WARNING: Could not get LAN NIC IP. Skipping route table." -ForegroundColor Yellow
-    Write-Host "    Create the route table manually after deployment." -ForegroundColor Yellow
-    $skipRouteTable = $true
-} else {
-    $skipRouteTable = $false
+    Write-Host "    Could not auto-detect LAN NIC IP." -ForegroundColor Yellow
+    $lanNicIp = Read-Host -Prompt "    Enter LAN NIC private IP (or press Enter to skip route table)"
 }
-if (-not $skipRouteTable) {
+
+if ($lanNicIp) {
     Write-Host "    LAN NIC IP: $lanNicIp" -ForegroundColor DarkGray
 
     az network route-table create --resource-group $ResourceGroup --name $RtName -o none
@@ -376,18 +362,15 @@ if (-not $skipRouteTable) {
         --route-table $RtName `
         -o none
     Assert-AzSuccess "Associate route table"
+} else {
+    Write-Host "    Skipped route table creation." -ForegroundColor Yellow
 }
 
 # Output
-$publicIp = az network public-ip show `
-    --resource-group $ResourceGroup `
-    --name $PipName `
-    --query ipAddress -o tsv
-
 Write-Host ""
 Write-Host "=== Deployment Complete ===" -ForegroundColor Green
 Write-Host "Public IP:    $publicIp"
-Write-Host "SSH:          ssh ${AdminUser}@${publicIp}  (password auth)"
+Write-Host "SSH:          ssh root@${publicIp}  (password: opnsense)"
 Write-Host "WebGUI:       https://${publicIp}"
 Write-Host "Credentials:  root / opnsense (change immediately!)"
 Write-Host ""

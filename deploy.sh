@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — Deploy an OPNsense VM to replace Azure VPN Gateway
+# deploy.sh - Deploy an OPNsense VM to replace Azure VPN Gateway
 #
 # Usage:
 #   ./deploy.sh                           # uses defaults + prompts for subscription
@@ -7,21 +7,24 @@
 #   source params.env && ./deploy.sh      # load all params from env file
 #
 # Environment variables (with defaults):
-#   SUBSCRIPTION_ID   — (required) Azure subscription ID
-#   RESOURCE_GROUP    — Resource group name          [rg-opnsense-vpn]
-#   LOCATION          — Azure region                 [westeurope]
-#   VNET_NAME         — Virtual network name         [vnet-opnsense]
-#   VNET_CIDR         — VNet address space           [10.200.0.0/16]
-#   SUBNET_WAN_CIDR   — WAN subnet                  [10.200.0.0/24]
-#   SUBNET_LAN_CIDR   — LAN subnet                  [10.200.1.0/24]
-#   VM_NAME           — VM name                      [vm-opnsense-01]
-#   VM_SIZE           — VM size                      [Standard_B2s]
-#   ADMIN_USER        — SSH admin user               [azureadmin]
-#   ADMIN_PASSWORD    — VM password (prompted if empty)
-#   OPNSENSE_VERSION  — OPNsense version to install  [26.1]
-#   HOSTNAME_LABEL    — OPNsense hostname            [opn-vpn-01]
-#   CONFIG_BASE_URL   — URL prefix for script files  [GitHub raw URL]
-#   FREEBSD_URN       — FreeBSD image URN
+#   SUBSCRIPTION_ID   - (required) Azure subscription ID
+#   RESOURCE_GROUP    - Resource group name          [rg-opnsense-vpn]
+#   LOCATION          - Azure region                 [westeurope]
+#   VNET_NAME         - Virtual network name         [vnet-opnsense]
+#   VNET_CIDR         - VNet address space           [10.200.0.0/16]
+#   SUBNET_WAN_NAME   - WAN subnet name              [snet-wan]
+#   SUBNET_WAN_CIDR   - WAN subnet                  [10.200.0.0/24]
+#   SUBNET_LAN_NAME   - LAN subnet name              [snet-lan]
+#   SUBNET_LAN_CIDR   - LAN subnet                  [10.200.1.0/24]
+#   VM_NAME           - VM name                      [opnsense-01-vm]
+#   VM_SIZE           - VM size                      [Standard_B2ts_v2]
+#   ADMIN_USER        - SSH admin user               [azureadmin]
+#   ADMIN_PASSWORD    - VM password (prompted if empty)
+#   OPNSENSE_VERSION  - OPNsense version to install  [25.1]
+#   HOSTNAME_LABEL    - OPNsense hostname            [opn-vpn-01]
+#   CONFIG_BASE_URL   - URL prefix for script files
+#   FREEBSD_URN       - FreeBSD image URN
+#   USE_EXISTING_VNET - Set to "true" to use existing VNet
 #
 set -euo pipefail
 
@@ -33,24 +36,27 @@ RESOURCE_GROUP="${RESOURCE_GROUP:-rg-opnsense-vpn}"
 LOCATION="${LOCATION:-westeurope}"
 VNET_NAME="${VNET_NAME:-vnet-opnsense}"
 VNET_CIDR="${VNET_CIDR:-10.200.0.0/16}"
-SUBNET_WAN_NAME="snet-wan"
-SUBNET_LAN_NAME="snet-lan"
+SUBNET_WAN_NAME="${SUBNET_WAN_NAME:-snet-wan}"
+SUBNET_LAN_NAME="${SUBNET_LAN_NAME:-snet-lan}"
 SUBNET_WAN_CIDR="${SUBNET_WAN_CIDR:-10.200.0.0/24}"
 SUBNET_LAN_CIDR="${SUBNET_LAN_CIDR:-10.200.1.0/24}"
-VM_NAME="${VM_NAME:-vm-opnsense-01}"
+VM_NAME="${VM_NAME:-opnsense-01-vm}"
 VM_SIZE="${VM_SIZE:-Standard_B2ts_v2}"
 ADMIN_USER="${ADMIN_USER:-azureadmin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-NSG_NAME="nsg-opnsense"
-PIP_NAME="pip-opnsense"
-NIC_WAN_NAME="nic-opnsense-wan"
-NIC_LAN_NAME="nic-opnsense-lan"
-RT_NAME="rt-opnsense-lan"
 OPNSENSE_VERSION="${OPNSENSE_VERSION:-25.1}"
 HOSTNAME_LABEL="${HOSTNAME_LABEL:-opn-vpn-01}"
 CONFIG_BASE_URL="${CONFIG_BASE_URL:-https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts}"
-
 FREEBSD_URN="${FREEBSD_URN:-thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0}"
+USE_EXISTING_VNET="${USE_EXISTING_VNET:-false}"
+
+# Derive resource names from VM name prefix (e.g. opnsense-01-vm -> opnsense-01-nsg)
+NAME_PREFIX="${VM_NAME%-vm}"
+NSG_NAME="${NAME_PREFIX}-nsg"
+PIP_NAME="${NAME_PREFIX}-pip"
+NIC_WAN_NAME="${NAME_PREFIX}-nic-wan"
+NIC_LAN_NAME="${NAME_PREFIX}-nic-lan"
+RT_NAME="${NAME_PREFIX}-rt"
 
 # Parse CLI args
 while getopts "s:g:l:p:" opt; do
@@ -70,7 +76,6 @@ fi
 
 # Prompt for password if not provided
 if [ -z "$ADMIN_PASSWORD" ]; then
-  echo "No SSH key used — password authentication enabled."
   echo "Password must be 12-72 chars with uppercase, lowercase, digit, and special character."
   read -r -s -p "Enter admin password for VM: " ADMIN_PASSWORD
   echo ""
@@ -111,21 +116,27 @@ az group create \
 ###############################################################################
 # Virtual Network + Subnets
 ###############################################################################
-echo "--- Creating VNet and subnets ---"
-az network vnet create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$VNET_NAME" \
-  --address-prefix "$VNET_CIDR" \
-  --subnet-name "$SUBNET_WAN_NAME" \
-  --subnet-prefix "$SUBNET_WAN_CIDR" \
-  -o none
+if [ "$USE_EXISTING_VNET" = "true" ]; then
+  echo "--- Using existing VNet '$VNET_NAME' with subnets '$SUBNET_WAN_NAME' and '$SUBNET_LAN_NAME' ---"
+  az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$SUBNET_WAN_NAME" -o none
+  az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$SUBNET_LAN_NAME" -o none
+else
+  echo "--- Creating VNet and subnets ---"
+  az network vnet create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$VNET_NAME" \
+    --address-prefix "$VNET_CIDR" \
+    --subnet-name "$SUBNET_WAN_NAME" \
+    --subnet-prefix "$SUBNET_WAN_CIDR" \
+    -o none
 
-az network vnet subnet create \
-  --resource-group "$RESOURCE_GROUP" \
-  --vnet-name "$VNET_NAME" \
-  --name "$SUBNET_LAN_NAME" \
-  --address-prefix "$SUBNET_LAN_CIDR" \
-  -o none 2>/dev/null || true
+  az network vnet subnet create \
+    --resource-group "$RESOURCE_GROUP" \
+    --vnet-name "$VNET_NAME" \
+    --name "$SUBNET_LAN_NAME" \
+    --address-prefix "$SUBNET_LAN_CIDR" \
+    -o none 2>/dev/null || true
+fi
 
 ###############################################################################
 # Network Security Group
@@ -136,7 +147,6 @@ az network nsg create \
   --name "$NSG_NAME" \
   -o none
 
-# NSG rules for VPN protocols
 declare -A NSG_RULES=(
   ["Allow-SSH"]="100 Tcp 22"
   ["Allow-HTTPS"]="110 Tcp 443"
@@ -145,39 +155,34 @@ declare -A NSG_RULES=(
   ["Allow-IPsec-NAT-T"]="140 Udp 4500"
   ["Allow-OpenVPN"]="150 Udp 1194"
   ["Allow-L2TP"]="160 Udp 1701"
-  ["Allow-ESP"]="170 * *"
 )
 
 for RULE_NAME in "${!NSG_RULES[@]}"; do
   read -r PRIORITY PROTOCOL PORT <<< "${NSG_RULES[$RULE_NAME]}"
-  EXTRA_ARGS=""
-  if [ "$RULE_NAME" = "Allow-ESP" ]; then
-    EXTRA_ARGS="--protocol Esp"
-    az network nsg rule create \
-      --resource-group "$RESOURCE_GROUP" \
-      --nsg-name "$NSG_NAME" \
-      --name "$RULE_NAME" \
-      --priority "$PRIORITY" \
-      --direction Inbound \
-      --access Allow \
-      --protocol Esp \
-      --source-address-prefixes '*' \
-      --destination-port-ranges '*' \
-      -o none 2>/dev/null || true
-  else
-    az network nsg rule create \
-      --resource-group "$RESOURCE_GROUP" \
-      --nsg-name "$NSG_NAME" \
-      --name "$RULE_NAME" \
-      --priority "$PRIORITY" \
-      --direction Inbound \
-      --access Allow \
-      --protocol "$PROTOCOL" \
-      --source-address-prefixes '*' \
-      --destination-port-ranges "$PORT" \
-      -o none 2>/dev/null || true
-  fi
+  az network nsg rule create \
+    --resource-group "$RESOURCE_GROUP" \
+    --nsg-name "$NSG_NAME" \
+    --name "$RULE_NAME" \
+    --priority "$PRIORITY" \
+    --direction Inbound \
+    --access Allow \
+    --protocol "$PROTOCOL" \
+    --source-address-prefixes '*' \
+    --destination-port-ranges "$PORT" \
+    -o none 2>/dev/null || true
 done
+
+az network nsg rule create \
+  --resource-group "$RESOURCE_GROUP" \
+  --nsg-name "$NSG_NAME" \
+  --name "Allow-ESP" \
+  --priority 170 \
+  --direction Inbound \
+  --access Allow \
+  --protocol Esp \
+  --source-address-prefixes '*' \
+  --destination-port-ranges '*' \
+  -o none 2>/dev/null || true
 
 ###############################################################################
 # Public IP
@@ -230,16 +235,13 @@ az vm create \
   -o none
 
 ###############################################################################
-# Install OPNsense via CustomScriptForLinux (older v1.5 extension works on FreeBSD)
+# Get public IP and calculate gateway
 ###############################################################################
-echo "--- Installing bash on FreeBSD (required for script extension) ---"
-
 PUBLIC_IP=$(az network public-ip show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$PIP_NAME" \
   --query ipAddress -o tsv)
 
-# Calculate WAN subnet gateway IP (first usable IP in subnet)
 WAN_SUBNET_PREFIX=$(az network vnet subnet show \
   --resource-group "$RESOURCE_GROUP" \
   --vnet-name "$VNET_NAME" \
@@ -248,11 +250,17 @@ WAN_SUBNET_PREFIX=$(az network vnet subnet show \
 GATEWAY_IP=$(echo "$WAN_SUBNET_PREFIX" | sed 's|/.*||; s|\.[0-9]*$|.1|')
 echo "    WAN Gateway IP: $GATEWAY_IP"
 
-# Install bash via SSH (pipe password to sudo -S for non-interactive use)
+###############################################################################
+# Install bash (required for CustomScript extension handler)
+###############################################################################
+echo "--- Installing bash on FreeBSD ---"
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   "${ADMIN_USER}@${PUBLIC_IP}" \
   "echo '${ADMIN_PASSWORD}' | sudo -S pkg install -y bash"
 
+###############################################################################
+# Run OPNsense bootstrap via CustomScriptForLinux v1.5 (works on FreeBSD)
+###############################################################################
 echo "--- Running OPNsense bootstrap via CustomScript extension ---"
 echo "    This will take 10-15 minutes..."
 
@@ -272,47 +280,53 @@ az vm extension set \
   -o none || echo "    Extension reported non-zero exit (expected if VM rebooted during bootstrap)."
 
 ###############################################################################
-# Route Table — point LAN traffic through OPNsense
+# Route Table
 ###############################################################################
 echo "--- Creating route table ---"
 LAN_NIC_IP=$(az network nic show \
   --resource-group "$RESOURCE_GROUP" \
   --name "$NIC_LAN_NAME" \
-  --query 'ipConfigurations[0].privateIpAddress' -o tsv)
+  --query 'ipConfigurations[0].privateIpAddress' -o tsv 2>/dev/null || echo "")
 
-az network route-table create \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$RT_NAME" \
-  -o none
+if [ -z "$LAN_NIC_IP" ]; then
+  echo "    Could not auto-detect LAN NIC IP."
+  read -r -p "    Enter LAN NIC private IP (or press Enter to skip): " LAN_NIC_IP
+fi
 
-az network route-table route create \
-  --resource-group "$RESOURCE_GROUP" \
-  --route-table-name "$RT_NAME" \
-  --name "route-via-opnsense" \
-  --address-prefix "0.0.0.0/0" \
-  --next-hop-type VirtualAppliance \
-  --next-hop-ip-address "$LAN_NIC_IP" \
-  -o none
+if [ -n "$LAN_NIC_IP" ]; then
+  echo "    LAN NIC IP: $LAN_NIC_IP"
 
-az network vnet subnet update \
-  --resource-group "$RESOURCE_GROUP" \
-  --vnet-name "$VNET_NAME" \
-  --name "$SUBNET_LAN_NAME" \
-  --route-table "$RT_NAME" \
-  -o none
+  az network route-table create \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$RT_NAME" \
+    -o none
+
+  az network route-table route create \
+    --resource-group "$RESOURCE_GROUP" \
+    --route-table-name "$RT_NAME" \
+    --name "route-via-opnsense" \
+    --address-prefix "0.0.0.0/0" \
+    --next-hop-type VirtualAppliance \
+    --next-hop-ip-address "$LAN_NIC_IP" \
+    -o none
+
+  az network vnet subnet update \
+    --resource-group "$RESOURCE_GROUP" \
+    --vnet-name "$VNET_NAME" \
+    --name "$SUBNET_LAN_NAME" \
+    --route-table "$RT_NAME" \
+    -o none
+else
+  echo "    Skipped route table creation."
+fi
 
 ###############################################################################
 # Output
 ###############################################################################
-PUBLIC_IP=$(az network public-ip show \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$PIP_NAME" \
-  --query ipAddress -o tsv)
-
 echo ""
 echo "=== Deployment Complete ==="
 echo "Public IP:    $PUBLIC_IP"
-echo "SSH:          ssh ${ADMIN_USER}@${PUBLIC_IP}  (password auth)"
+echo "SSH:          ssh root@${PUBLIC_IP}  (password: opnsense)"
 echo "WebGUI:       https://${PUBLIC_IP}"
 echo "Credentials:  root / opnsense (change immediately!)"
 echo ""

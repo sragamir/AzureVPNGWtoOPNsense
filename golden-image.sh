@@ -12,7 +12,7 @@ set -euo pipefail
 
 SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-opnsense-vpn}"
-VM_NAME="${VM_NAME:-vm-opnsense-01}"
+VM_NAME="${VM_NAME:-opnsense-01-vm}"
 IMAGE_NAME="${IMAGE_NAME:-img-opnsense-golden}"
 IMAGE_RG="${IMAGE_RG:-$RESOURCE_GROUP}"
 ADMIN_USER="${ADMIN_USER:-azureadmin}"
