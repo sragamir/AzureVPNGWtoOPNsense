@@ -227,7 +227,6 @@ az vm create \
   --nics "$NIC_WAN_NAME" "$NIC_LAN_NAME" \
   --os-disk-size-gb 30 \
   --storage-sku StandardSSD_LRS \
-  --security-type Standard \
   -o none
 
 ###############################################################################

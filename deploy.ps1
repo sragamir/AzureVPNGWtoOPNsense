@@ -284,7 +284,6 @@ az vm create `
     --nics $NicWanName $NicLanName `
     --os-disk-size-gb 30 `
     --storage-sku StandardSSD_LRS `
-    --security-type Standard `
     -o none
 Assert-AzSuccess "Create VM"
 
