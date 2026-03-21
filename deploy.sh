@@ -230,22 +230,22 @@ az vm create \
   -o none
 
 ###############################################################################
-# Run OPNsense bootstrap via run-command (CustomScript extension doesn't work on FreeBSD)
+# Run OPNsense bootstrap via SSH (Azure VM extensions don't work on FreeBSD)
 ###############################################################################
-echo "--- Running OPNsense bootstrap via run-command ---"
-echo "    This will take 10-15 minutes..."
+echo "--- Running OPNsense bootstrap via SSH ---"
+echo "    You will be prompted for the VM password."
+echo "    Bootstrap takes 10-15 minutes, then the VM reboots automatically."
 
-az vm run-command invoke \
+PUBLIC_IP=$(az network public-ip show \
   --resource-group "$RESOURCE_GROUP" \
-  --name "$VM_NAME" \
-  --command-id RunShellScript \
-  --scripts \
-    "cd /tmp" \
-    "fetch -o configureopnsense.sh '${CONFIG_BASE_URL}/configureopnsense.sh'" \
-    "fetch -o config-base.xml '${CONFIG_BASE_URL}/config-base.xml'" \
-    "fetch -o get_nic_gw.py '${CONFIG_BASE_URL}/get_nic_gw.py'" \
-    "sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'" \
-  -o table
+  --name "$PIP_NAME" \
+  --query ipAddress -o tsv)
+
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  "${ADMIN_USER}@${PUBLIC_IP}" \
+  "cd /tmp && fetch -o configureopnsense.sh '${CONFIG_BASE_URL}/configureopnsense.sh' && fetch -o config-base.xml '${CONFIG_BASE_URL}/config-base.xml' && fetch -o get_nic_gw.py '${CONFIG_BASE_URL}/get_nic_gw.py' && sudo sh configureopnsense.sh '${OPNSENSE_VERSION}' '${HOSTNAME_LABEL}' '${CONFIG_BASE_URL}'"
+# SSH may return non-zero because the VM reboots and kills the connection
+echo "    SSH session ended (VM is rebooting after bootstrap)."
 
 ###############################################################################
 # Route Table — point LAN traffic through OPNsense

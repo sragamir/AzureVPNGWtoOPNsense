@@ -287,30 +287,25 @@ az vm create `
     -o none
 Assert-AzSuccess "Create VM"
 
-# Run OPNsense bootstrap via VM run-command (CustomScript extension doesn't work on FreeBSD)
-Write-Host "--- Running OPNsense bootstrap via run-command ---"
-Write-Host "    This will take 10-15 minutes..." -ForegroundColor DarkGray
+# Run OPNsense bootstrap via SSH (Azure VM extensions don't work on FreeBSD)
+Write-Host "--- Running OPNsense bootstrap via SSH ---" -ForegroundColor Cyan
+Write-Host "    You will be prompted for the VM password." -ForegroundColor DarkGray
+Write-Host "    Bootstrap takes 10-15 minutes, then the VM reboots automatically." -ForegroundColor DarkGray
 
-$bootstrapScript = @"
-cd /tmp
-fetch -o configureopnsense.sh '$ConfigBaseUrl/configureopnsense.sh'
-fetch -o config-base.xml '$ConfigBaseUrl/config-base.xml'
-fetch -o get_nic_gw.py '$ConfigBaseUrl/get_nic_gw.py'
-sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'
+$publicIp = az network public-ip show `
+    --resource-group $ResourceGroup `
+    --name $PipName `
+    --query ipAddress -o tsv
+
+$sshCommand = @"
+cd /tmp && fetch -o configureopnsense.sh '$ConfigBaseUrl/configureopnsense.sh' && fetch -o config-base.xml '$ConfigBaseUrl/config-base.xml' && fetch -o get_nic_gw.py '$ConfigBaseUrl/get_nic_gw.py' && sudo sh configureopnsense.sh '$OpnsenseVersion' '$HostnameLabel' '$ConfigBaseUrl'
 "@
 
-$scriptFile = Join-Path $env:TEMP "opnsense-bootstrap.sh"
-$bootstrapScript | Set-Content -Path $scriptFile -Encoding UTF8 -NoNewline
-
-az vm run-command invoke `
-    --resource-group $ResourceGroup `
-    --name $VmName `
-    --command-id RunShellScript `
-    --scripts "@$scriptFile" `
-    -o table
-Assert-AzSuccess "Run OPNsense bootstrap"
-
-Remove-Item $scriptFile -ErrorAction SilentlyContinue
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${AdminUser}@${publicIp}" $sshCommand
+# SSH may return non-zero because the VM reboots and kills the connection — that's expected
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "    SSH session ended (expected — VM is rebooting after bootstrap)." -ForegroundColor Yellow
+}
 
 # Route table
 Write-Host "--- Creating route table ---"
