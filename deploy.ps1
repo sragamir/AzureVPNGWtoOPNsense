@@ -5,6 +5,7 @@
 .DESCRIPTION
     PowerShell wrapper for OPNsense VM deployment using Azure CLI.
     Loads defaults from params.env if present, then applies CLI parameters.
+    Supports deploying into an existing VNet/subnets.
 
 .PARAMETER SubscriptionId
     Azure subscription ID (required).
@@ -16,13 +17,23 @@
     Azure region. Default: westeurope
 
 .PARAMETER VmSize
-    VM size. Default: Standard_B2s
+    VM size. Default: Standard_B2ts_v2
+
+.PARAMETER UseExistingVnet
+    If set, skips VNet and subnet creation — uses existing ones.
+
+.PARAMETER SubnetWanName
+    Name of the WAN subnet. Default: snet-wan
+
+.PARAMETER SubnetLanName
+    Name of the LAN subnet. Default: snet-lan
 
 .EXAMPLE
     .\deploy.ps1 -SubscriptionId "00000000-0000-0000-0000-000000000000"
 
 .EXAMPLE
-    .\deploy.ps1 -SubscriptionId $sub -Location uksouth -VmSize Standard_B2als_v2
+    # Deploy into existing VNet with existing subnets
+    .\deploy.ps1 -SubscriptionId $sub -VnetName "existing-vnet" -SubnetWanName "default" -SubnetLanName "backend" -UseExistingVnet
 #>
 
 [CmdletBinding()]
@@ -32,7 +43,9 @@ param(
     [string]$Location,
     [string]$VnetName,
     [string]$VnetCidr,
+    [string]$SubnetWanName,
     [string]$SubnetWanCidr,
+    [string]$SubnetLanName,
     [string]$SubnetLanCidr,
     [string]$VmName,
     [string]$VmSize,
@@ -41,7 +54,8 @@ param(
     [string]$OpnsenseVersion,
     [string]$HostnameLabel,
     [string]$ConfigBaseUrl,
-    [string]$FreeBsdUrn
+    [string]$FreeBsdUrn,
+    [switch]$UseExistingVnet
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,7 +70,10 @@ if (Test-Path $paramsFile) {
     Get-Content $paramsFile | ForEach-Object {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith('#')) {
-            if ($line -match '^(\w+)\s*=\s*"?(.*?)"?\s*$') {
+            # Match KEY="VALUE" or KEY=VALUE, strip inline comments after closing quote
+            if ($line -match '^(\w+)\s*=\s*"([^"]*)"') {
+                $envVars[$Matches[1]] = $Matches[2]
+            } elseif ($line -match '^(\w+)\s*=\s*(\S+)') {
                 $envVars[$Matches[1]] = $Matches[2]
             }
         }
@@ -75,7 +92,9 @@ $ResourceGroup   = Resolve-Param $ResourceGroup   "RESOURCE_GROUP"   "rg-opnsens
 $Location        = Resolve-Param $Location        "LOCATION"         "westeurope"
 $VnetName        = Resolve-Param $VnetName        "VNET_NAME"        "vnet-opnsense"
 $VnetCidr        = Resolve-Param $VnetCidr        "VNET_CIDR"        "10.200.0.0/16"
+$SubnetWanName   = Resolve-Param $SubnetWanName   "SUBNET_WAN_NAME"  "snet-wan"
 $SubnetWanCidr   = Resolve-Param $SubnetWanCidr   "SUBNET_WAN_CIDR"  "10.200.0.0/24"
+$SubnetLanName   = Resolve-Param $SubnetLanName   "SUBNET_LAN_NAME"  "snet-lan"
 $SubnetLanCidr   = Resolve-Param $SubnetLanCidr   "SUBNET_LAN_CIDR"  "10.200.1.0/24"
 $VmName          = Resolve-Param $VmName          "VM_NAME"          "vm-opnsense-01"
 $VmSize          = Resolve-Param $VmSize          "VM_SIZE"          "Standard_B2ts_v2"
@@ -85,6 +104,11 @@ $HostnameLabel   = Resolve-Param $HostnameLabel   "HOSTNAME_LABEL"   "opn-vpn-01
 $ConfigBaseUrl   = Resolve-Param $ConfigBaseUrl   "CONFIG_BASE_URL"  "https://raw.githubusercontent.com/sragamir/AzureVPNGWtoOPNsense/main/scripts"
 $FreeBsdUrn      = Resolve-Param $FreeBsdUrn      "FREEBSD_URN"      "thefreebsdfoundation:freebsd-14_1:14_1-release-amd64-gen2-zfs:14.1.0"
 
+# Also check USE_EXISTING_VNET from params.env
+if (-not $UseExistingVnet -and $envVars.ContainsKey("USE_EXISTING_VNET") -and $envVars["USE_EXISTING_VNET"] -eq "true") {
+    $UseExistingVnet = [switch]::new($true)
+}
+
 # Validate subscription ID
 if (-not $SubscriptionId) {
     $SubscriptionId = Read-Host -Prompt "Enter Azure Subscription ID"
@@ -93,8 +117,6 @@ if ($SubscriptionId -notmatch '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$') {
     throw "Invalid Subscription ID format: $SubscriptionId"
 }
 
-$SubnetWanName = "snet-wan"
-$SubnetLanName = "snet-lan"
 $NsgName       = "nsg-opnsense"
 $PipName       = "pip-opnsense"
 $NicWanName    = "nic-opnsense-wan"
@@ -105,7 +127,6 @@ $RtName        = "rt-opnsense-lan"
 # Password
 ###############################################################################
 if (-not $AdminPassword) {
-    # Check params.env for ADMIN_PASSWORD
     $envPwd = if ($envVars.ContainsKey("ADMIN_PASSWORD")) { $envVars["ADMIN_PASSWORD"] } else { "" }
     if ($envPwd) {
         $AdminPassword = ConvertTo-SecureString $envPwd -AsPlainText -Force
@@ -129,6 +150,11 @@ Write-Host "=== OPNsense VPN VM Deployment ===" -ForegroundColor Cyan
 Write-Host "Subscription: $SubscriptionId"
 Write-Host "Resource Group: $ResourceGroup ($Location)"
 Write-Host "VM: $VmName ($VmSize)"
+if ($UseExistingVnet) {
+    Write-Host "VNet: $VnetName (existing) | WAN: $SubnetWanName | LAN: $SubnetLanName"
+} else {
+    Write-Host "VNet: $VnetName (new $VnetCidr) | WAN: $SubnetWanName ($SubnetWanCidr) | LAN: $SubnetLanName ($SubnetLanCidr)"
+}
 Write-Host ""
 
 # Set subscription
@@ -145,22 +171,31 @@ az group create --name $ResourceGroup --location $Location -o none
 Assert-AzSuccess "Create resource group"
 
 # VNet + Subnets
-Write-Host "--- Creating VNet and subnets ---"
-az network vnet create `
-    --resource-group $ResourceGroup `
-    --name $VnetName `
-    --address-prefix $VnetCidr `
-    --subnet-name $SubnetWanName `
-    --subnet-prefix $SubnetWanCidr `
-    -o none
-Assert-AzSuccess "Create VNet"
+if ($UseExistingVnet) {
+    Write-Host "--- Using existing VNet '$VnetName' with subnets '$SubnetWanName' and '$SubnetLanName' ---"
+    # Verify the VNet and subnets exist
+    az network vnet subnet show --resource-group $ResourceGroup --vnet-name $VnetName --name $SubnetWanName -o none
+    Assert-AzSuccess "Verify WAN subnet '$SubnetWanName' exists"
+    az network vnet subnet show --resource-group $ResourceGroup --vnet-name $VnetName --name $SubnetLanName -o none
+    Assert-AzSuccess "Verify LAN subnet '$SubnetLanName' exists"
+} else {
+    Write-Host "--- Creating VNet and subnets ---"
+    az network vnet create `
+        --resource-group $ResourceGroup `
+        --name $VnetName `
+        --address-prefix $VnetCidr `
+        --subnet-name $SubnetWanName `
+        --subnet-prefix $SubnetWanCidr `
+        -o none
+    Assert-AzSuccess "Create VNet"
 
-az network vnet subnet create `
-    --resource-group $ResourceGroup `
-    --vnet-name $VnetName `
-    --name $SubnetLanName `
-    --address-prefix $SubnetLanCidr `
-    -o none 2>$null
+    az network vnet subnet create `
+        --resource-group $ResourceGroup `
+        --vnet-name $VnetName `
+        --name $SubnetLanName `
+        --address-prefix $SubnetLanCidr `
+        -o none 2>$null
+}
 
 # NSG
 Write-Host "--- Creating NSG ---"
